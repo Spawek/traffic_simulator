@@ -24,8 +24,10 @@ struct KeyboardSteered;
 const CAR_WIDTH: f32 = 25.0;
 const CAR_HEIGHT: f32 = 50.0;
 
-const ARROW_LENGTH: f32 = CAR_HEIGHT * 0.8;
+const MAX_ARROW_LENGTH: f32 = CAR_HEIGHT * 0.8;
 const ARROW_LAYER: f32 = 10.0;
+
+const MAX_SPEED : f32 = 5.0;
 
 fn add_cars(mut commands: Commands, asset_server: Res<AssetServer>) {
     let car_handle = asset_server.load("car_tiny.png");
@@ -51,8 +53,8 @@ fn add_cars(mut commands: Commands, asset_server: Res<AssetServer>) {
     let c1_arrow = commands
         .spawn_bundle(SpriteBundle {
             transform: Transform {
-                translation: Vec3::new(0.0, ARROW_LENGTH / 2.0, ARROW_LAYER),
-                scale: Vec3::new(2.0, ARROW_LENGTH, 0.0),
+                translation: Vec3::new(0.0, MAX_ARROW_LENGTH / 2.0, ARROW_LAYER),
+                scale: Vec3::new(2.0, MAX_ARROW_LENGTH, 0.0),
                 ..default()
             },
             sprite: Sprite {
@@ -66,18 +68,18 @@ fn add_cars(mut commands: Commands, asset_server: Res<AssetServer>) {
 
     commands.entity(c1).add_child(c1_arrow);
 
-    // commands
-    //     .spawn_bundle(SpriteBundle {
-    //         texture: car_handle.clone(),
-    //         transform: Transform::default(),
-    //         ..default()
-    //     })
-    //     .insert(Car {
-    //         x: 100.0,
-    //         y: -200.0,
-    //         ..Default::default()
-    //     })
-    //     .insert(Name("C2".to_string()));
+    commands
+        .spawn_bundle(SpriteBundle {
+            texture: car_handle.clone(),
+            transform: Transform::default(),
+            ..default()
+        })
+        .insert(Car {
+            x: 100.0,
+            y: -200.0,
+            ..Default::default()
+        })
+        .insert(Name("C2".to_string()));
 
     // commands
     //     .spawn_bundle(SpriteBundle {
@@ -122,6 +124,7 @@ fn add_cars(mut commands: Commands, asset_server: Res<AssetServer>) {
 struct CarTransformUpdateTimer(Timer);
 struct CarUpdateTimer(Timer);
 struct GetKeyboardSignalsTimer(Timer);
+struct ArrowUpdateTimer(Timer);
 
 struct CarPlugin;
 
@@ -130,10 +133,12 @@ impl Plugin for CarPlugin {
         app.insert_resource(CarUpdateTimer(Timer::from_seconds(1.0 / 60.0, true)))
         .insert_resource(CarTransformUpdateTimer(Timer::from_seconds(1.0 / 60.0, true)))
         .insert_resource(GetKeyboardSignalsTimer(Timer::from_seconds(1.0 / 60.0, true)))
+        .insert_resource(ArrowUpdateTimer(Timer::from_seconds(1.0 / 60.0, true)))
             .add_startup_system(setup_camera)
             .add_startup_system(add_cars)
             .add_system(update_cars)
             .add_system(update_car_transforms)
+            .add_system(update_arrows)
             .add_system(get_keyboard_signals);
     }
 }
@@ -163,25 +168,37 @@ fn update_cars(
 fn update_car_transforms(
     time: Res<Time>,
     mut timer: ResMut<CarTransformUpdateTimer>,
-    mut query: Query<(&mut Transform, &Children, &Car), (With<Car>, Without<Arrow>)>,
+    mut query: Query<(&mut Transform, &Car), (With<Car>, Without<Arrow>)>,
     mut child_query: Query<&mut Transform, With<Arrow>>,
 ) {
     if timer.0.tick(time.delta()).just_finished() {
-        for (mut transform, children, car) in query.iter_mut() {
+        for (mut transform, car) in query.iter_mut() {
             transform.rotation = Quat::from_rotation_z(-1.0 * car.angle.to_radians());
             transform.translation.x = car.x;
             transform.translation.y = car.y;
+        }
+    }
+}
 
-            // Adjust arrow - it should change only when the direction changes.
+fn update_arrows(
+    time: Res<Time>,
+    mut timer: ResMut<ArrowUpdateTimer>,
+    mut query: Query<(&Children, &Car), (With<Car>, Without<Arrow>)>,
+    mut child_query: Query<&mut Transform, With<Arrow>>,
+) {
+    if timer.0.tick(time.delta()).just_finished() {
+        for (children, car) in query.iter_mut() {
+            let arrow_length = car.speed / MAX_SPEED * MAX_ARROW_LENGTH;
             for &child in children.iter() {
                 let mut arrow = child_query.get_mut(child).unwrap();
                 let rad = -1.0 * car.wheel_angle / 360.0 * (2.0 * PI);
                 arrow.rotation = Quat::from_rotation_z(rad);
                 arrow.translation = Vec3::new(
-                    -1.0 * ARROW_LENGTH / 2.0 * rad.sin(),
-                    ARROW_LENGTH / 2.0 * rad.cos(),
+                    -1.0 * arrow_length / 2.0 * rad.sin(),
+                    arrow_length / 2.0 * rad.cos(),
                     ARROW_LAYER,
                 );
+                arrow.scale.y = arrow_length;
             }
         }
     }
@@ -195,24 +212,23 @@ fn get_keyboard_signals(
 ) {
     const SPEED_INCREMENT: f32 = 0.1;
     const MIN_SPEED : f32 = 0.0;
-    const MAX_SPEED : f32 = 5.0;
 
-    const ANGLE_INCREMENT: f32 = 0.5;
+    const ANGLE_INCREMENT: f32 = 0.8;
     const MIN_ANGLE : f32 = -35.0;
     const MAX_ANGLE : f32 = 35.0;
 
     if timer.0.tick(time.delta()).just_finished() {
         for mut car in query.iter_mut() {
-            if keys.pressed(KeyCode::W){
+            if keys.pressed(KeyCode::W) || keys.pressed(KeyCode::Up){
                 car.speed += SPEED_INCREMENT;
             }
-            if keys.pressed(KeyCode::S){
+            if keys.pressed(KeyCode::S) || keys.pressed(KeyCode::Down){
                 car.speed -= SPEED_INCREMENT;
             }
-            if keys.pressed(KeyCode::A){
+            if keys.pressed(KeyCode::A) || keys.pressed(KeyCode::Left){
                 car.wheel_angle -= ANGLE_INCREMENT;
             }
-            if keys.pressed(KeyCode::D){
+            if keys.pressed(KeyCode::D) || keys.pressed(KeyCode::Right){
                 car.wheel_angle += ANGLE_INCREMENT;
             }
             car.speed = car.speed.max(MIN_SPEED).min(MAX_SPEED);
@@ -229,5 +245,8 @@ fn main() {
 }
 
 // TODO:
-// make the angle length proportional to speed
+// collision detection
+//      IDEA: get 4 border lines for each car and if any lines collide then cars collide?
+//            check each 4 with the previous lines and then add them to the set of lines to prevent car intersecting with each other
+//            it's N^2, which should be fine for now
 // change angle steering to automatically going back to 0
